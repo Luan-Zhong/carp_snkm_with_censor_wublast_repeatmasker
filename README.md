@@ -38,18 +38,17 @@ Make sure to move the downloaded databases to the lib directory and update the f
 - After downloading all the required databases, run the following command for WU-BLAST:
   
   ```bash
-  PROJECT_DIR=<your/path>/snkm_carp_censor_abblast_repeatmasker
-  LIB_DIR=${PROJECT_DIR}/lib
-  DB_DIR=${LIB_DIR}/BlastDB
-  CONTAINER=${PROJECT_DIR}/src/CARP_05_w_repeatmasker_R.sif
+  # Make sure your are in carp_snkm_with_censor_wublast_repeatmasker
+  DB_DIR=lib/BlastDB
+  CONTAINER=src/CARP_05_w_repeatmasker_R.sif
 
-  mkdir -p "${DB_DIR}"
+  mkdir -p ${DB_DIR}
   # Protein 
-  apptainer exec ${CONTAINER} xdformat -p -k -o ${DB_DIR}/uniprot_sprot.2026-10-18 ${LIB_DIR}/uniprot_sprot.2026-10-18.fasta
+  apptainer exec ${CONTAINER} xdformat -p -k -o ${DB_DIR}/uniprot_sprot.2026-10-18 lib/uniprot_sprot.2026-10-18.fasta
   # GB-TE
-  apptainer exec ${CONTAINER} xdformat -p -k -o ${DB_DIR}/GB_TE.2026-10-18 ${LIB_DIR}/GB_TE.2026-10-18.fa
+  apptainer exec ${CONTAINER} xdformat -p -k -o ${DB_DIR}/GB_TE.2026-10-18 lib/GB_TE.2026-10-18.fa
   # Retrovirus
-  apptainer exec ${CONTAINER} xdformat -n -k -o "${DB_DIR}/all_retrovirus.2026-10-18" "${LIB_DIR}/all_retrovirus.2026-10-18.fasta"
+  apptainer exec ${CONTAINER} xdformat -n -k -o ${DB_DIR}/all_retrovirus.2026-10-18 lib/all_retrovirus.2026-10-18.fasta
   ```
 
 ## Quick start
