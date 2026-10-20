@@ -27,7 +27,7 @@ Make sure to move the downloaded databases to the lib directory and update the f
 
   Then download the data, this taking a bit time due to the file will be large
   ```bash
-  esearch -db protein -query "reverse transcriptase or transposon or repetitive element or RNA-directed DNA polymerase or pol protein or non-LTR retrotransposon or mobile gag or polymerase (pol)" | efetch -format fasta > GB_TE.2026-10-18.fa
+  esearch -db protein -query "reverse transcriptase OR transposon OR repetitive element OR RNA-directed DNA polymerase OR pol protein OR non-LTR retrotransposon OR mobile gag or polymerase (pol)" | efetch -format fasta > GB_TE.2026-10-18.fa
   ```
   if this not working try
   ```bash
@@ -35,7 +35,22 @@ Make sure to move the downloaded databases to the lib directory and update the f
   ```
 - Download retrovirus datasets </br>
   Download retrovirus datasets from your browser: [NCBI Virus](https://www.ncbi.nlm.nih.gov/labs/virus/vssi/#/virus?SeqType_s=Nucleotide&VirusLineage_ss=Viruses,taxid:11632)
+- After downloading all the required databases, run the following command for WU-BLAST:
+  
+  ```bash
+  PROJECT_DIR=<your/path>/snkm_carp_censor_abblast_repeatmasker
+  LIB_DIR=${PROJECT_DIR}/lib
+  DB_DIR=${LIB_DIR}/BlastDB
+  CONTAINER=${PROJECT_DIR}/src/CARP_05_w_repeatmasker_R.sif
 
+  mkdir -p "${DB_DIR}"
+  # Protein 
+  apptainer exec ${CONTAINER} xdformat -p -k -o ${DB_DIR}/uniprot_sprot.2026-10-18 ${LIB_DIR}/uniprot_sprot.2026-10-18.fasta
+  # GB-TE
+  apptainer exec ${CONTAINER} xdformat -p -k -o ${DB_DIR}/GB_TE.2026-10-18 ${LIB_DIR}/GB_TE.2026-10-18.fa
+  # Retrovirus
+  apptainer exec ${CONTAINER} xdformat -n -k -o "${DB_DIR}/all_retrovirus.2026-10-18" "${LIB_DIR}/all_retrovirus.2026-10-18.fasta"
+  ```
 
 ## Quick start
 
