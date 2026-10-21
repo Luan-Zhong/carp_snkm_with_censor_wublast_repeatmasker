@@ -1,0 +1,676 @@
+# SnakeCARP
+# This is the snakemake prpeline for CARP
+# 2026-10-19
+# Version: 4.0
+# snakemake version: conda version 9.27.0
+
+####################
+# Global variables #
+####################
+
+# Set input genome here
+# e.g.: genome file "X.fa"
+# Set preFix = ["X"]
+preFix = config.get("preFix")
+if isinstance(preFix, str):
+    preFix = [preFix]
+
+# Read the directory containing genome FASTA files
+# Example: "data" means that test_input uses data/test_input.fa
+INPUT_DIR = config["input_dir"].rstrip("/") + "/"
+
+# Read the directory used for all pipeline outputs
+# rstrip("/") removes an existing trailing slash before adding exactly one
+OUTDIR = config["output_dir"].rstrip("/") + "/"
+
+# Read the maximum number of threads used by multithreaded tools
+MAX_THREADS = config["max_threads"]
+
+# Read the maximum number of bases placed in one genome bundle
+BUNDLE_SIZE = config["bundle_size"]
+
+# Read the minimum Krishna alignment identity
+# Example: 0.94 means at least 94 percent identity
+KRISHNA_FILTID = config["krishna_filter_identity"]
+
+# Read the minimum Krishna alignment length in bases
+# Example: 400 means that alignments shorter than 400 bases are filtered
+KRISHNA_FILTLEN = config["krishna_filter_length"]
+
+# Read the maximum number of sequences used for one Seqer repeat family
+SEQER_MAX_FAMILY_SIZE = config["seqer_max_family_size"]
+
+# Read the minimum retained sequence-length proportion used by Seqer
+# Example: 0.95 means at least 95 percent of the expected length
+SEQER_MIN_LENGTH = config["seqer_min_length"]
+
+# Control whether RepeatMasker genome annotation is requested
+ANNOTATE_GENOME = config["annotate_genome"]
+if not isinstance(ANNOTATE_GENOME, bool):
+    raise ValueError(
+        "[ERROR] annotate_genome must be true or false"
+    )
+
+# Control whether the final HTML report is requested
+MAKE_REPORT = config["make_report"]
+if not isinstance(MAKE_REPORT, bool):
+    raise ValueError(
+        "[ERROR] make_report must be true or false"
+    )
+# Control whether consensus annotation plots are requested
+PLOT_CONSENSUS_MAP = config["plot_consensus_map"]
+
+if not isinstance(PLOT_CONSENSUS_MAP, bool):
+    raise ValueError(
+        "[ERROR] plot_consensus_map must be true or false"
+    )
+
+
+# Read the consensus IDs selected for plotting
+# YAML lists become Python lists
+# Example: [family1, family2] becomes ["family1", "family2"]
+PLOT_CONSENSUS_IDS = config["plot_consensus_ids"]
+
+if not isinstance(PLOT_CONSENSUS_IDS, list):
+    raise ValueError(
+        "[ERROR] plot_consensus_ids must be a YAML list"
+    )
+
+# Plotting requires at least one ID when enabled
+if PLOT_CONSENSUS_MAP and not PLOT_CONSENSUS_IDS:
+    raise ValueError(
+        "[ERROR] plot_consensus_ids must not be empty when plot_consensus_map is true"
+    )
+
+# Require every selected value to be one non-empty string
+if any(
+    not isinstance(consensus_id, str)
+    or not consensus_id
+    or "," in consensus_id
+    for consensus_id in PLOT_CONSENSUS_IDS
+):
+    raise ValueError(
+        "[ERROR] plot_consensus_ids must contain non-empty IDs without commas"
+    )
+
+# all must be used alone because it already represents every consensus
+if "all" in PLOT_CONSENSUS_IDS and len(PLOT_CONSENSUS_IDS) != 1:
+    raise ValueError(
+        "[ERROR] all cannot be combined with individual consensus IDs"
+    )
+
+# Convert the YAML list into the single comma-separated R argument
+# Example: ["family1", "family2"] becomes "family1,family2"
+PLOT_CONSENSUS_IDS_ARGUMENT = ",".join(
+    PLOT_CONSENSUS_IDS
+)
+
+# Return no annotation dependency when genome annotation is disabled
+def optional_genome_annotation(wildcards):
+    if not ANNOTATE_GENOME:
+        return []
+
+    # Return the stage 12 directory when annotation is enabled
+    return (
+        OUTDIR
+        + f"{wildcards.prefix}/12_genome_annotation"
+    )
+
+# Return no plot dependency when consensus plotting is disabled
+def optional_consensus_plots(wildcards):
+    if not PLOT_CONSENSUS_MAP:
+        return []
+
+    # Return the stage 13 plot directory when plotting is enabled
+    return (
+        OUTDIR
+        + f"{wildcards.prefix}/13_consensus_plots"
+    )
+
+# Always request the stage 11 annotated de novo repeat library
+FINAL_OUTPUTS = expand(
+    OUTDIR
+    + "{prefix}/11_generate_annotated_repeat_lib/{prefix}_Denovo_TE_Library.fasta",
+    prefix=preFix,
+)
+
+# Add the RepeatMasker output directory only when annotation is enabled
+if ANNOTATE_GENOME:
+    FINAL_OUTPUTS.extend(
+        expand(
+            OUTDIR + "{prefix}/12_genome_annotation",
+            prefix=preFix,
+        )
+    )
+
+# Add the consensus plot directory only when plotting is enabled
+if PLOT_CONSENSUS_MAP:
+    FINAL_OUTPUTS.extend(
+        expand(
+            OUTDIR + "{prefix}/13_consensus_plots",
+            prefix=preFix,
+        )
+    )
+
+# Add the HTML report only when report generation is enabled
+if MAKE_REPORT:
+    FINAL_OUTPUTS.extend(
+        expand(
+            OUTDIR + "{prefix}/{prefix}_CARP_snkm_report.html",
+            prefix=preFix,
+        )
+    )
+
+onstart:
+    print("#################################\n### Starting CARP... ><(((('> ###\n#################################\n")
+    shell("mkdir -p {OUTDIR}")
+
+# Use singularity local contianer
+# singularity exec lib/CARP_05_w_repeatmasker_R.sif which RepeatMasker and R packages
+singularity: "src/CARP_05_w_repeatmasker_R.sif"
+
+
+# Set output file inside expand function to run seleted step
+rule all:
+    input:
+        FINAL_OUTPUTS
+
+
+
+################
+# Rules Proper #
+################
+# Genome split by bundle
+checkpoint bundle:
+    input:
+        genome = "data/{prefix}.fa"
+    output:
+        directory(OUTDIR + "{prefix}/00_bundle")
+    params:
+        out_dir = OUTDIR + "{prefix}/00_bundle",
+        bundle_size = BUNDLE_SIZE
+    shell:
+        """
+        echo "======= Running bundle... ======="
+
+        mkdir -p {params.out_dir}
+
+        genome=$(realpath {input.genome})
+        cd {params.out_dir}
+
+        bundle \
+            -bundle {params.bundle_size} \
+            -in "$genome"
+
+        echo "======= Bundle completed! Output is in {params.out_dir} ======="
+        """
+        
+def bundled_genomes(wildcards):
+    bundle_dir = checkpoints.bundle.get(
+        prefix=wildcards.prefix
+    ).output[0]
+
+    files = sorted(glob.glob(str(bundle_dir) + "/*.fa"))
+
+    if not files:
+        raise ValueError(
+            f"No bundled FASTA files found in {bundle_dir}"
+        )
+
+    return files
+
+
+# Pairwise alignment with krishna
+checkpoint krishna:
+    input:
+        genomes=bundled_genomes
+    output:
+        directory(OUTDIR + "{prefix}/01_krishna")
+    params:
+        out_dir = OUTDIR + "{prefix}/01_krishna/",
+        thrd = MAX_THREADS,
+        filtid = KRISHNA_FILTID,
+        filtlen = KRISHNA_FILTLEN
+    shell:
+        """
+        echo "====================== Krishna: Performing pairwise alignment... ======================"
+        mkdir -p {params.out_dir}
+        echo "-> Created directory {params.out_dir}"
+        
+        genomes=$(realpath {input.genomes})
+        echo "-> $genomes will be processed with CARP"
+        
+        cd {params.out_dir}
+        echo "-> Towards {params.out_dir}"
+        
+        echo "-> Running krishna..."
+        matrix \
+            -threads={params.thrd} \
+            -krishnaflags="-tmp=. -threads={params.thrd} -log -filtid={params.filtid} -filtlen={params.filtlen}" $genomes
+        echo "====================== Krishna completed! Output in {params.out_dir} ======================"
+        """
+
+import glob
+
+def krishna_gffs_for_igor(wildcards):
+    krishna_dir = checkpoints.krishna.get(
+        prefix=wildcards.prefix
+    ).output[0]
+
+    gffs = sorted(glob.glob(krishna_dir + "/*.gff"))
+
+    if not gffs:
+        raise ValueError(
+            f"No Krishna GFF files found in {krishna_dir}"
+        )
+
+    return gffs
+
+# Repeat family groupings into json file by igor
+rule igor:
+    input: 
+        krishna_gffs = krishna_gffs_for_igor
+    output: 
+        gff = OUTDIR + "{prefix}/02_igor/{prefix}_krishna.gff",
+        json = OUTDIR + "{prefix}/02_igor/{prefix}_krishna.json"
+    params:
+        out_dir = OUTDIR + "{prefix}/02_igor/",
+    shell: 
+        """
+        echo "====================== igor: Grouping repeat families into JSON file... ======================"
+        mkdir -p {params.out_dir}
+        echo "-> Created directory {params.out_dir}"
+        
+        cat {input.krishna_gffs} > {output.gff}
+        echo "-> Running igor"
+        igor -in {output.gff} -out {output.json}
+        echo "====================== igor completed! Output in {params.out_dir} ======================"
+        """
+
+# Use seqer to generate consensus sequences from genome intervals
+rule seqer:
+    input: 
+        igor_out = rules.igor.output.json,
+        genome = INPUT_DIR + "{prefix}.fa"
+    output: 
+        gff = OUTDIR + "{prefix}/03_seqer/{prefix}_krishna.igor.gff",
+        cat = OUTDIR + "{prefix}/03_seqer/{prefix}.mfa",
+        consensus = OUTDIR + "{prefix}/03_seqer/{prefix}_temp_ConsensusSequences.fa"
+    params:
+        out_dir = OUTDIR + "{prefix}/03_seqer/",
+        consensus_dir = OUTDIR + "{prefix}/03_seqer/consensus/",
+        maxFam = SEQER_MAX_FAMILY_SIZE,
+        minLen = SEQER_MIN_LENGTH,
+        thrd = MAX_THREADS,
+    shell:
+        """
+        echo "================ seqer: Generating consensus sequences from genome intervals... ================"
+        echo "-> Created directories: {params.out_dir} and {params.consensus_dir}"
+        mkdir -p {params.out_dir}
+        mkdir -p {params.consensus_dir}
+        echo "-> Running gffer..."
+        gffer < {input.igor_out} > {output.gff}
+        cat {input.genome} > {output.cat}
+        
+        echo "-> Running seqer..."
+        seqer -aligner=muscle -dir={params.consensus_dir} -fasta=true -maxFam={params.maxFam} -subsample=true -minLen={params.minLen} -threads={params.thrd} -ref={output.cat} {output.gff}
+        echo "-> seqer completed! Output in {params.out_dir}"
+        echo "-> Combining consensus..."
+        find {params.consensus_dir} -maxdepth 1 -name '[!.]*.fq' -print0 | xargs -r0 cat > {output.consensus}
+        echo "====================== Consensus combined! Output in {params.out_dir}consensus ======================"
+        """
+
+
+
+# This block is for snakemake prefix rule
+rule finalize_consensus:
+    input:
+        OUTDIR + "{prefix}/03_seqer/{prefix}_temp_ConsensusSequences.fa"
+    output:
+        OUTDIR + "{prefix}/04_finalize_consensus/{prefix}_ConsensusSequences.fa"
+    params:
+        out_dir = OUTDIR + "{prefix}/04_finalize_consensus"
+    shell:
+        """
+        echo "================ finalize_consensus ================"
+        mkdir -p {params.out_dir}
+        cat {input} > {output}
+        echo "================ finalize_consensus completed! check files ================"
+        """
+
+rule repeats_in_repbase:
+    input:
+        consensus = OUTDIR + "{prefix}/04_finalize_consensus/{prefix}_ConsensusSequences.fa",
+        repbase = config["repbase_library"],
+        our_known = config["our_known_library"]
+    output:
+        OUTDIR + "{prefix}/04_finalize_consensus/{prefix}_ConsensusSequences.fa.idx",
+        OUTDIR + "{prefix}/05_repeats_in_repbase/{prefix}_ConsensusSequences.fa.aln",
+        OUTDIR + "{prefix}/05_repeats_in_repbase/{prefix}_ConsensusSequences.fa.found",
+        OUTDIR + "{prefix}/05_repeats_in_repbase/{prefix}_ConsensusSequences.fa.map",
+        OUTDIR + "{prefix}/05_repeats_in_repbase/{prefix}_ConsensusSequences.fa.masked",
+        # "src/ClassifyConsensusSequences.class"
+        # "output/known.txt",
+        # "output/partial.txt",
+        # "output/check.txt",
+        # "output/notKnown.fa",
+        # "output/notKnown.fa.gff"
+    params:
+        out_dir = OUTDIR + "{prefix}/05_repeats_in_repbase",
+        thrd = MAX_THREADS
+    shell:
+        """
+        echo "====================== Identifying repeats in RepBase... ======================"
+        mkdir -p {params.out_dir}
+        consensus=$(realpath {input.consensus})
+        repbase=$(realpath {input.repbase})
+        our_known=$(realpath {input.our_known})
+        
+        cd {params.out_dir}
+        censor -bprm cpus={params.thrd} -lib "$repbase" -lib "$our_known" "$consensus"
+        echo "====================== repeats_in_repbase completed! Output in {params.out_dir}======================"
+        """
+
+rule classify_consensus:
+    input:
+        script = "src/ClassifyConsensusSequences_CARP_snkm.java",
+        consensus = OUTDIR + "{prefix}/04_finalize_consensus/{prefix}_ConsensusSequences.fa",
+        map = OUTDIR + "{prefix}/05_repeats_in_repbase/{prefix}_ConsensusSequences.fa.map",
+        repbase = config["repbase_library"],
+        our_known = config["our_known_library"]
+    output:
+        known = OUTDIR + "{prefix}/06_classify_consensus/{prefix}_known.txt",
+        partial = OUTDIR + "{prefix}/06_classify_consensus/{prefix}_partial.txt",
+        check = OUTDIR + "{prefix}/06_classify_consensus/{prefix}_check.txt",
+        not_known = OUTDIR + "{prefix}/06_classify_consensus/{prefix}_notKnown.fa",
+        not_known_gff = OUTDIR + "{prefix}/06_classify_consensus/{prefix}_notKnown.fa.gff",
+        log = OUTDIR + "{prefix}/06_classify_consensus/{prefix}_ClassifyConsensusSequences.log",
+    params:
+        out_dir = OUTDIR + "{prefix}/06_classify_consensus"
+    shell:
+        """
+        echo "====================== Processing and classifying consensus sequences... ======================"
+        mkdir -p {params.out_dir}
+        javac -d src {input.script}
+        
+        consensus=$(realpath {input.consensus})
+        map=$(realpath {input.map})
+        repbase=$(realpath {input.repbase})
+        our_known=$(realpath {input.our_known})
+        echo "-> Classify consensus sequence"
+        java -cp src ClassifyConsensusSequences_CARP_snkm "$consensus" "$map" "$repbase" "$our_known" "{output.known}" "{output.partial}" "{output.check}" "{output.not_known}" "{output.not_known_gff}" > "{output.log}" 2>&1
+        echo "====================== Classification completed! Output in {params.out_dir} ======================"
+        """
+
+rule filter_sequences:
+    input:
+        not_known = OUTDIR + "{prefix}/06_classify_consensus/{prefix}_notKnown.fa",
+    output:
+        protein = OUTDIR + "{prefix}/07_filter_sequences/{prefix}_notKnown.fa.spwb",
+        protein_gff = OUTDIR + "{prefix}/07_filter_sequences/{prefix}_notKnown.fa.spwb.gff",
+        gb_te = OUTDIR + "{prefix}/07_filter_sequences/{prefix}_notKnown.fa.tewb",
+        gb_te_gff = OUTDIR + "{prefix}/07_filter_sequences/{prefix}_notKnown.fa.tewb.gff",
+        retrovirus = OUTDIR + "{prefix}/07_filter_sequences/{prefix}_notKnown.fa.ervwb",
+        retrovirus_gff = OUTDIR + "{prefix}/07_filter_sequences/{prefix}_notKnown.fa.ervwb.gff",
+    params:
+        out_dir = OUTDIR + "{prefix}/07_filter_sequences",
+        # Add the fixed XDF database directory to each configured database name
+        protein_lib = "lib/BlastDB/" + config["swissprot_library"],
+        gb_te_lib = "lib/BlastDB/" + config["gb_te_library"],
+        retrovirus_lib = "lib/BlastDB/" + config["retrovirus_library"],
+        thrd = MAX_THREADS,
+        script = "src/wublastx2gff.py"
+    shell:
+        """
+        mkdir -p {params.out_dir}
+        echo "====================== Identifying notknowns from protein database... ======================"
+        blastx {params.protein_lib} {input.not_known} -gspmax=1 -E 0.00001 -B 1 -V 1 -cpus={params.thrd} > {output.protein}
+        python {params.script} {output.protein} > {output.protein_gff}
+        echo "-> Identifying notknowns from GB_TE database... "
+        blastx {params.gb_te_lib} {input.not_known} -gspmax=1 -E 0.00001 -B 1 -V 1 -cpus={params.thrd} > {output.gb_te}
+        python {params.script} {output.gb_te} > {output.gb_te_gff}
+        echo "-> Identifying notknowns from retrovirus database... "
+        tblastx {params.retrovirus_lib} {input.not_known} -gspmax=1 -E 0.00001 -B 1 -V 1 -cpus={params.thrd} > {output.retrovirus}
+        python {params.script} {output.retrovirus} > {output.retrovirus_gff}
+
+        # Add the gb prefix required by the converted Retrovirus FASTA IDs
+        perl -pi -e 's/(\tTarget )([^ ]+)/$1gb|$2/' \
+            {output.retrovirus_gff}
+
+        echo "====================== Sequence filtering completed! Output in {params.out_dir} ========================"
+        """
+
+rule get_protein_info_from_consensus:
+    input:
+        script = "src/GetProteins_CARP_snkm.java",
+        not_known = OUTDIR + "{prefix}/06_classify_consensus/{prefix}_notKnown.fa",
+        protein_hits = OUTDIR + "{prefix}/07_filter_sequences/{prefix}_notKnown.fa.spwb.gff"
+    output:
+        protein = OUTDIR + "{prefix}/08_get_protein_info/{prefix}_protein.txt",
+        not_protein = OUTDIR + "{prefix}/08_get_protein_info/{prefix}_notKnownNotProtein.fa",
+        log = OUTDIR + "{prefix}/08_get_protein_info/{prefix}_GetProteins.log"
+    params:
+        out_dir = OUTDIR + "{prefix}/08_get_protein_info"
+    shell:
+        """
+        echo "==================== Retrieving protein information from consensus sequences... ===================="
+        mkdir -p {params.out_dir}
+
+        javac -d src {input.script}
+
+        not_known=$(realpath {input.not_known})
+        protein_hits=$(realpath {input.protein_hits})
+
+        java -cp src GetProteins_CARP_snkm \
+            "$not_known" \
+            "$protein_hits" \
+            "{output.protein}" \
+            "{output.not_protein}" \
+            > "{output.log}" 2>&1
+
+        echo "====================== Protein information retrieved! Output in {params.out_dir} ======================"
+        """
+
+rule check_ssr:
+    input:
+        not_protein = OUTDIR + "{prefix}/08_get_protein_info/{prefix}_notKnownNotProtein.fa",
+    output:
+        out_dir = OUTDIR + "{prefix}/09_check_ssr/{prefix}_notKnownNotProtein.phobos"
+    shell:
+        """
+        echo "====================== Check for simple sequence repeats... ======================"
+        phobos-linux-gcc4.1.2 -r 7 --outputFormat 0 --printRepeatSeqMode 0 {input.not_protein} > {output}
+        echo "====================== SSR check completed! Output in {output.out_dir} ======================"
+        """
+
+rule identify_ssr_from_phobos_output:
+    input:
+        script = "src/IdentifySSRs_CARP_snkm.java",
+        gbte_fa = "lib/" + config["gb_te_library"] + ".fa",
+        retrovirus_fa = "lib/" + config["retrovirus_library"] + ".fasta",
+        phobos = OUTDIR + "{prefix}/09_check_ssr/{prefix}_notKnownNotProtein.phobos",
+        not_protein = OUTDIR + "{prefix}/08_get_protein_info/{prefix}_notKnownNotProtein.fa"
+    output:
+        ssr = OUTDIR + "{prefix}/10_identify_ssr/{prefix}_SSR.txt",
+        not_ssr = OUTDIR + "{prefix}/10_identify_ssr/{prefix}_notKnownNotProteinNotSSR.fa",
+        ssr_log = OUTDIR + "{prefix}/10_identify_ssr/{prefix}_IdentifySSRs.log",
+        gbte_out = OUTDIR + "{prefix}/10_identify_ssr/{prefix}_GB_TE.fa",
+        retrovirus_out = OUTDIR + "{prefix}/10_identify_ssr/{prefix}_all_retrovirus.fasta"
+    params:
+        out_dir = OUTDIR + "{prefix}/10_identify_ssr"
+    shell:
+        """
+        echo "================== Identifying SSRs sequences from Phobos output... =================="
+        mkdir -p {params.out_dir}
+
+        javac -d lib {input.script}
+
+        phobos=$(realpath {input.phobos})
+        not_protein=$(realpath {input.not_protein})
+
+        java -cp src IdentifySSRs_CARP_snkm \
+            "$phobos" \
+            "$not_protein" \
+            "{output.ssr}" \
+            "{output.not_ssr}" \
+            > "{output.ssr_log}" 2>&1
+
+        perl -pe "s/^>/>gi|GBTE|sp|/g" {input.gbte_fa} > {output.gbte_out}
+
+        sed -i 's/ /| /' {output.gbte_out}
+        perl -pe 's/^>/>gi|ERV|gb|/; s/[[:space:]]+\|/| / if /^>/' {input.retrovirus_fa} > {output.retrovirus_out}
+
+        echo "================== Data format conversion completed! Output in {params.out_dir} =================="
+        """
+
+rule generate_annotated_repeat_lib:
+    input:
+        script = "src/GenerateAnnotatedLibrary_CARP_snkm.java",
+        consensus = OUTDIR + "{prefix}/04_finalize_consensus/{prefix}_ConsensusSequences.fa",
+        consensus_map = OUTDIR + "{prefix}/05_repeats_in_repbase/{prefix}_ConsensusSequences.fa.map",
+        te_gff = OUTDIR + "{prefix}/07_filter_sequences/{prefix}_notKnown.fa.tewb.gff",
+        gb_te = OUTDIR + "{prefix}/10_identify_ssr/{prefix}_GB_TE.fa",
+        erv_gff = OUTDIR + "{prefix}/07_filter_sequences/{prefix}_notKnown.fa.ervwb.gff",
+        retrovirus = OUTDIR + "{prefix}/10_identify_ssr/{prefix}_all_retrovirus.fasta",
+        ssr = OUTDIR + "{prefix}/10_identify_ssr/{prefix}_SSR.txt",
+        protein = OUTDIR + "{prefix}/08_get_protein_info/{prefix}_protein.txt",
+        known = OUTDIR + "{prefix}/06_classify_consensus/{prefix}_known.txt"
+    output:
+        library = OUTDIR + "{prefix}/11_generate_annotated_repeat_lib/{prefix}_Denovo_TE_Library.fasta",
+        log = OUTDIR + "{prefix}/11_generate_annotated_repeat_lib/{prefix}_GenerateAnnotatedLibrary.log"
+    params:
+        out_dir = OUTDIR + "{prefix}/11_generate_annotated_repeat_lib"
+    shell:
+        """
+        echo "================== Finally, generating annotated repeat library... =================="
+        mkdir -p {params.out_dir}
+
+        javac -d lib {input.script}
+
+        consensus=$(realpath {input.consensus})
+        consensus_map=$(realpath {input.consensus_map})
+        te_gff=$(realpath {input.te_gff})
+        gb_te=$(realpath {input.gb_te})
+        erv_gff=$(realpath {input.erv_gff})
+        retrovirus=$(realpath {input.retrovirus})
+        ssr=$(realpath {input.ssr})
+        protein=$(realpath {input.protein})
+        known=$(realpath {input.known})
+        library=$(realpath -m {output.library})
+        log=$(realpath -m {output.log})
+
+        cd lib
+
+        java -cp ../src GenerateAnnotatedLibrary_CARP_snkm \
+            "$consensus" \
+            "$consensus_map" \
+            "$te_gff" \
+            "$gb_te" \
+            "$erv_gff" \
+            "$retrovirus" \
+            "$ssr" \
+            "$protein" \
+            "$known" \
+            "$library" \
+            > "$log" 2>&1
+        echo "================== Check TE library results in {params.out_dir} =================="
+        """
+
+rule annotate_genome:
+    input:
+        repbase = config["repbase_library"],
+        denovo = OUTDIR + "{prefix}/11_generate_annotated_repeat_lib/{prefix}_Denovo_TE_Library.fasta",
+        mfa_file = OUTDIR + "{prefix}/03_seqer/{prefix}.mfa"
+    output:
+        directory(OUTDIR + "{prefix}/12_genome_annotation")
+    params:
+        thrd = MAX_THREADS,
+        out_dir = OUTDIR + "{prefix}/12_genome_annotation",
+    shell:
+        """
+        echo "================== Annotate genome by RepeatMasker =================="
+        mkdir -p {params.out_dir}
+        combined="{params.out_dir}/{wildcards.prefix}_combined_library2.fa"
+        cat {input.repbase} {input.denovo} > "$combined"
+        env FAMDB_DIR= RepeatMasker -engine rmblast -pa 16 -a -nolow -norna -dir {params.out_dir} -lib "$combined" {input.mfa_file}
+        echo "================== Check genome annotation result in {params.out_dir} ================== "
+        """
+
+rule plot_consensus_map:
+    input:
+        # R script that reads the Censor map and WU-BLAST reports
+        script = "src/plot_censor_wublast_map.R",
+
+        # Consensus sequences determine plot IDs and sequence lengths
+        consensus = (
+            OUTDIR
+            + "{prefix}/04_finalize_consensus/{prefix}_ConsensusSequences.fa"
+        ),
+
+        # Censor provides RepBase and our-known annotations
+        map = (
+            OUTDIR
+            + "{prefix}/05_repeats_in_repbase/{prefix}_ConsensusSequences.fa.map"
+        ),
+
+        # The FASTA files identify the exact source of each map reference
+        repbase = config["repbase_library"],
+        our_known = config["our_known_library"],
+
+        # Use the original WU-BLAST reports because their GFF files
+        # do not retain identity or bit score
+        swissprot = rules.filter_sequences.output.protein,
+        gb_te = rules.filter_sequences.output.gb_te,
+        retrovirus = rules.filter_sequences.output.retrovirus
+
+    output:
+        plot_dir = directory(
+            OUTDIR + "{prefix}/13_consensus_plots"
+        )
+
+    params:
+        # Pass all or one comma-separated consensus ID string to R
+        consensus_ids = PLOT_CONSENSUS_IDS_ARGUMENT
+
+    log:
+        OUTDIR
+        + "{prefix}/13_consensus_plots/{prefix}_plot_consensus_map.log"
+    shell:
+        """
+        mkdir -p "{output.plot_dir}"
+
+        exec > >(tee "{log}") 2>&1
+
+        echo Running on `hostname`
+        echo Start time is `date`
+        trap 'echo End time is `date`' EXIT
+
+        /opt/r/bin/Rscript "{input.script}" \
+            "{input.consensus}" \
+            "{input.map}" \
+            "{input.repbase}" \
+            "{input.our_known}" \
+            "{input.swissprot}" \
+            "{input.gb_te}" \
+            "{input.retrovirus}" \
+            "{output.plot_dir}" \
+            "{params.consensus_ids}"
+        """
+        
+rule make_report:
+    input:
+        script = "src/make_report_censor_abblast_repeatmasker.py",
+        # Always wait for the core stage 11 library
+        core_library = rules.generate_annotated_repeat_lib.output.library,
+        # Wait for RepeatMasker only when annotate_genome is true
+        annotation = optional_genome_annotation
+    output:
+        file = OUTDIR + "{prefix}/{prefix}_CARP_snkm_report.html"
+    params:
+        sample_dir = OUTDIR + "{prefix}"
+    shell:
+        """
+        echo "================== Generating report ... =================="
+        python3 {input.script} {params.sample_dir} -o {output.file}
+        echo "================== Completed! CARP managed to swim to shore! =================="
+        """

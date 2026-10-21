@@ -1,0 +1,96 @@
+# This is the yaml file for CARP snakemake pipeline
+# Before running the snakemake pipeline, make sure you set up yaml file
+# 2026-10-14
+# Version 1
+
+###################
+# I/O Directories #
+###################
+
+# =========== Input & output directory =================
+input_dir: "data"
+output_dir: "output"
+
+# =========== Input genome name =================
+# Sample prefixes matching FASTA files under data/
+# Example
+# If your input file is data/test_input.fa
+# You need to put
+# preFix:
+#   - test_input
+preFix:
+  - X_38Mb_to_50Mb
+
+###################################
+# Reference libraries directories #
+###################################
+# Reference libraries
+repbase_library: "lib/Vertebrates_RepBase31.09.fa"
+our_known_library: "lib/our_known_reps_20130520.fasta"
+
+# Database names without directories or file extensions 
+# If your file is `lib/uniprot_sprot.2026-10-18.fasta`, you only need to enter `uniprot_sprot.2026-10-18` here. 
+# The directory path and file extension are hard-coded in the Snakefile. 
+# Note that the same prefix is used for both directory and file names, and the file must have the `.fasta` extension.
+swissprot_library: "uniprot_sprot.2026-10-18"
+# Same, lib/GB_TE.2026-10-18.fa, only need to put "GB_TE.2026-10-18"
+gb_te_library: "GB_TE.2026-10-18"
+# Same, lib/all_retrovirus.2026-10-18.fasta, only need to put "all_retrovirus.2026-10-18"
+retrovirus_library: "all_retrovirus.2026-10-18"
+
+###########################
+# Computational resources #
+###########################
+
+# Maximum threads used by multithreaded tools
+max_threads: 24
+
+###################
+# CARP parameters #
+###################
+
+# ========== Bundle ==========================================
+# Maximum number of bases in each bundled genome FASTA
+bundle_size: 3000000
+
+
+# ========== Krishna ==========================================
+# Minimum alignment identity as a proportion from 0 to 1
+krishna_filter_identity: 0.94
+# Minimum alignment length in bases
+krishna_filter_length: 400
+
+# ========== Seqer ============================================
+# Maximum number of members used for one repeat family
+seqer_max_family_size: 100
+# Minimum retained sequence length as a proportion from 0 to 1
+seqer_min_length: 0.95
+
+####################
+# Optional outputs #
+####################
+# ========= Enable rule annotate_genome =======================
+# Enable rule annotate_genome
+annotate_genome: true
+# ========= Enable rule plot_consensus_map ====================
+# Not generate plot
+# plot_consensus_map: false
+# plot_consensus_ids: []
+# Generate consensus annotation PNG files
+plot_consensus_map: true
+# Use all to plot every consensus in the consensus FASTA
+plot_consensus_ids:
+  - all
+
+# Plot selected consensus IDs
+# plot_consensus_map: true
+# plot_consensus_ids:
+#   - family000002_consensus
+#   - family000001_consensus
+#   - family000007_consensus
+# ========= Enable rule make_report ===========================
+# Generate the final interactive html report
+make_report: true
+
+
+
