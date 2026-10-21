@@ -2,7 +2,7 @@
 This is a Snakemake pipeline for CARP that uses CENSOR, WU-BLAST, and RepeatMasker. Due to software licensing restrictions, this project does not provide a container. Users are required to install the necessary software dependencies themselves.
 
 ```bash
-conda create -n snkm9 -c bioconda snakemake=9.27.0
+conda create -n snkm9 -c bioconda -c conda-forge snakemake=9.27.0
 conda activate snkm9
 snakemake --version
 ```
