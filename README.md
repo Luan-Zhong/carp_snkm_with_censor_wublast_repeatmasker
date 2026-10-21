@@ -57,5 +57,8 @@ Make sure to move the downloaded databases to the lib directory and update the f
 # Dry run
 conda activate snkm9
 snakemake --snakefile Snakefile_censor_wublast_repeatmasker --use-singularity --printshellcmds --configfile config_censor_wublast_repeatmasker.yaml --cores 4 -n
+# Rerun incomplete
+snakemake --snakefile Snakefile_censor_wublast_repeatmasker --use-singularity --printshellcmds --configfile config_censor_wublast_repeatmasker.yaml --cores 4 --rerun-incomplete
+
 ```
 NB: You need a container to run this, or if you set up your local environment, then you can discard the `--use-singularity`
